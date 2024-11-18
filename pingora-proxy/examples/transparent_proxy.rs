@@ -189,12 +189,23 @@ mod boringssl_openssl {
         /// * `ca_cert` - The `Certificate` object for the CA to sign the new certificate with.
         /// * `dn_name` - The domain name to generate the certificate for.
         fn signed_cert_with_ca(ca_cert: &Certificate, dn_name: String) -> Certificate {
+            // Replace the first server name before the first dot with a wildcard '*'
+            let wildcard_dn_name = if let Some(pos) = dn_name.find('.') {
+                format!("*.{}", &dn_name[pos + 1..])
+            } else {
+                dn_name.clone()
+            };
+            let wildcard_file_name = if wildcard_dn_name.starts_with("*.") {
+                wildcard_dn_name.replacen("*.", "wildcard.", 1)
+            } else {
+                dn_name.clone()
+            };
             let path = format!("{}/tests/certs", env!("CARGO_MANIFEST_DIR"));
-            let cert_path = format!("{}/tests/certs/{dn_name}.pem", env!("CARGO_MANIFEST_DIR"));
-            let key_path = format!("{}/tests/certs/{dn_name}.key", env!("CARGO_MANIFEST_DIR"));
+            let cert_path = format!("{}/tests/certs/{wildcard_file_name}.pem", env!("CARGO_MANIFEST_DIR"));
+            let key_path = format!("{}/tests/certs/{wildcard_file_name}.key", env!("CARGO_MANIFEST_DIR"));
 
             let mut dn = DistinguishedName::new();
-            dn.push(rcgen::DnType::CommonName, dn_name.clone());
+            dn.push(rcgen::DnType::CommonName, wildcard_dn_name.clone());
             dn.push(rcgen::DnType::OrganizationName, "My SSE Proxy Organization Name".to_string());
             dn.push(rcgen::DnType::OrganizationalUnitName, "My SSE Proxy Organization Unit Name".to_string());
 
@@ -205,7 +216,7 @@ mod boringssl_openssl {
             params.not_after = time::OffsetDateTime::now_utc() + time::Duration::days(365 * 20);
 
             params.subject_alt_names = vec![
-                SanType::DnsName(dn_name.clone()),
+                SanType::DnsName(wildcard_dn_name.clone()),
                 SanType::DnsName(String::from("localhost")),
                 SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
                 SanType::IpAddress(std::net::IpAddr::V6(std::net::Ipv6Addr::new(
@@ -245,15 +256,25 @@ mod boringssl_openssl {
     impl pingora_core::listeners::TlsAccept for DynamicCert {
         async fn certificate_callback(&self, ssl: &mut pingora_core::tls::ssl::SslRef) {
             use pingora_core::tls::ext;
-            let sni = ssl.servername(ssl::NameType::HOST_NAME).unwrap();
+            let sni = ssl.servername(ssl::NameType::HOST_NAME).unwrap().to_string();
             info!("sni: {sni}");
-            let cert_path = format!("{}/tests/certs/{sni}", env!("CARGO_MANIFEST_DIR"));
+            let wildcard_dn_name = if let Some(pos) = sni.find('.') {
+                format!("*.{}", &sni[pos + 1..])
+            } else {
+                sni.clone()
+            };
+            let wildcard_file_name = if wildcard_dn_name.starts_with("*.") {
+                wildcard_dn_name.replacen("*.", "wildcard.", 1)
+            } else {
+                sni.clone()
+            };
+            let cert_path = format!("{}/tests/certs/{wildcard_file_name}", env!("CARGO_MANIFEST_DIR"));
             match Self::read_cert_from_pem(cert_path.to_string()) {
                 Ok(_cert) => {
                     info!("Successfully read cert: {cert_path}");
                 }
                 Err(_err) => {
-                    Self::signed_cert_with_ca(&self.cert, sni.to_string());
+                    Self::signed_cert_with_ca(&self.cert, wildcard_dn_name);
                     info!("Created new cert at {cert_path}");
                 }
             }
@@ -313,7 +334,7 @@ fn main() {
         tls_settings = TlsSettings;
     }
     tls_settings.enable_h2();
-    my_proxy.add_tls_with_settings("127.0.0.1:8443", None, tls_settings);
+    my_proxy.add_tls_with_settings("127.0.0.1:443", None, tls_settings);
     my_server.add_service(my_proxy);
 
     let mut prometheus_service_http =
