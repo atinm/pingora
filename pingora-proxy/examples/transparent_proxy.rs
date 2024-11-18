@@ -147,31 +147,31 @@ mod boringssl_openssl {
             cert
         }
 
-        /// Reads an existing CA certificate and private key from the specified PEM files.
+        /// Reads an existing certificate and private key from the specified PEM files.
         ///
         /// # Arguments
         ///
-        /// * `ca_path` - The path to the CA file without any extension (e.g. "certs/rootca").
+        /// * `cert_path` - The path to the certificate PEM file without any extension (e.g. "certs/rootca").
         ///
         /// # Returns
         ///
-        /// The `Certificate` object for the CA, or an error if the PEM files could not be read or parsed.
-        pub fn read_root_cert(ca_path: String) -> Result<Certificate, Box<dyn std::error::Error>> {
+        /// The `Certificate` object for the cert fo;e, or an error if the PEM files could not be read or parsed.
+        pub fn read_cert_from_pem(cert_path: String) -> Result<Certificate, Box<dyn std::error::Error>> {
             // Open the PEM file containing both the certificate and private key
 
-            let pem_cert_file = File::open(format!("{ca_path}.pem"))?;
+            let pem_cert_file = File::open(format!("{cert_path}.pem"))?;
             let mut pem_cert_reader = BufReader::new(pem_cert_file);
 
             let mut cert_string = String::new();
             pem_cert_reader.read_to_string(&mut cert_string)?;
 
-            let pem_key_file = File::open(format!("{ca_path}.key"))?;
+            let pem_key_file = File::open(format!("{cert_path}.key"))?;
             let mut pem_key_reader = BufReader::new(pem_key_file);
 
-            let mut key_pair_sting = String::new();
-            pem_key_reader.read_to_string(&mut key_pair_sting)?;
+            let mut key_pair_string = String::new();
+            pem_key_reader.read_to_string(&mut key_pair_string)?;
 
-            let key_pair = KeyPair::from_pem(key_pair_sting.as_str())?;
+            let key_pair = KeyPair::from_pem(key_pair_string.as_str())?;
 
             // Parse the PEM file and create a new CertificateParams object
             let ca_cert_params = CertificateParams::from_ca_cert_pem(cert_string.as_str(), key_pair)?;
@@ -189,6 +189,10 @@ mod boringssl_openssl {
         /// * `ca_cert` - The `Certificate` object for the CA to sign the new certificate with.
         /// * `dn_name` - The domain name to generate the certificate for.
         fn signed_cert_with_ca(ca_cert: &Certificate, dn_name: String) -> Certificate {
+            let path = format!("{}/tests/certs", env!("CARGO_MANIFEST_DIR"));
+            let cert_path = format!("{}/tests/certs/{dn_name}.pem", env!("CARGO_MANIFEST_DIR"));
+            let key_path = format!("{}/tests/certs/{dn_name}.key", env!("CARGO_MANIFEST_DIR"));
+
             let mut dn = DistinguishedName::new();
             dn.push(rcgen::DnType::CommonName, dn_name.clone());
             dn.push(rcgen::DnType::OrganizationName, "My SSE Proxy Organization Name".to_string());
@@ -210,9 +214,6 @@ mod boringssl_openssl {
             ];
             let cert = Certificate::from_params(params).unwrap();
             let cert_signed = cert.serialize_pem_with_signer(&ca_cert).unwrap();
-            let path = format!("{}/tests/certs", env!("CARGO_MANIFEST_DIR"));
-            let cert_path = format!("{}/tests/certs/{dn_name}.pem", env!("CARGO_MANIFEST_DIR"));
-            let key_path = format!("{}/tests/certs/{dn_name}.key", env!("CARGO_MANIFEST_DIR"));
         
             std::fs::create_dir_all(path).unwrap();
             std::fs::write(cert_path, cert_signed).unwrap();
@@ -225,13 +226,14 @@ mod boringssl_openssl {
             if cert_path == String::from("new") {
                 ca_cert = Self::create_ca_cert();
             } else {
-                match Self::read_root_cert(cert_path.to_string()) {
+                match Self::read_cert_from_pem(cert_path.to_string()) {
                     Ok(cert) => {
-                        info!("Successfully read CA:");
+                        info!("Successfully read CA: {cert_path}");
                         ca_cert = cert;
                     }
                     Err(_err) => {
                         ca_cert = Self::create_ca_cert();
+                        info!("Created new cert at {cert_path}");
                     }
                 }
             }
@@ -245,10 +247,28 @@ mod boringssl_openssl {
             use pingora_core::tls::ext;
             let sni = ssl.servername(ssl::NameType::HOST_NAME).unwrap();
             info!("sni: {sni}");
-            let cert = Self::signed_cert_with_ca(&self.cert, sni.to_string());
-            let cert_signed = cert.serialize_pem_with_signer(&self.cert).unwrap();
-            ext::ssl_use_certificate(ssl, &X509::from_pem(&cert_signed.as_bytes()).unwrap()).unwrap();
-            ext::ssl_use_private_key(ssl, &PKey::private_key_from_pem(&cert.serialize_private_key_pem().as_bytes()).unwrap()).unwrap();
+            let cert_path = format!("{}/tests/certs/{sni}", env!("CARGO_MANIFEST_DIR"));
+            match Self::read_cert_from_pem(cert_path.to_string()) {
+                Ok(_cert) => {
+                    info!("Successfully read cert: {cert_path}");
+                }
+                Err(_err) => {
+                    Self::signed_cert_with_ca(&self.cert, sni.to_string());
+                    info!("Created new cert at {cert_path}");
+                }
+            }
+
+            let pem_cert_file = File::open(format!("{cert_path}.pem")).unwrap();
+            let mut pem_cert_reader = BufReader::new(pem_cert_file);
+            let mut cert_string = String::new();
+            pem_cert_reader.read_to_string(&mut cert_string).unwrap();
+            ext::ssl_use_certificate(ssl, &X509::from_pem(&cert_string.as_bytes()).unwrap()).unwrap();
+            let pem_key_file = File::open(format!("{cert_path}.key")).unwrap();
+            let mut pem_key_reader = BufReader::new(pem_key_file);
+
+            let mut key_pair_string = String::new();
+            pem_key_reader.read_to_string(&mut key_pair_string).unwrap();
+            ext::ssl_use_private_key(ssl, &PKey::private_key_from_pem(&key_pair_string.as_bytes()).unwrap()).unwrap();
         }
     }
 }
