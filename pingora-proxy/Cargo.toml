@@ -50,12 +50,15 @@ futures-util = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.8"
+rcgen = { version = "0.10.0", features = ["pem", "x509-parser"] }
+time = "0.3"
+pem = "3.0.2"
 
 [target.'cfg(unix)'.dev-dependencies]
 hyperlocal = "0.8"
 
 [features]
-default = []
+default = ["openssl"]
 openssl = ["pingora-core/openssl", "pingora-cache/openssl", "openssl_derived"]
 boringssl = ["pingora-core/boringssl", "pingora-cache/boringssl", "openssl_derived"]
 rustls = ["pingora-core/rustls", "pingora-cache/rustls", "any_tls"]
